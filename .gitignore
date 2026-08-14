@@ -1,0 +1,11 @@
+build/
+build-san/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+.DS_Store
+.vscode/
+__pycache__/
+*.pyc
