@@ -131,12 +131,66 @@ static void test_allocation_unallocated(void) {
     printf("  [PASS] test_allocation_unallocated\n");
 }
 
+static void test_rules_numeric_safety(void);
 int main(void) {
     printf("Running Allocation Unit Tests...\n");
     test_allocation_single_match();
     test_allocation_priority_override();
     test_allocation_ambiguous();
     test_allocation_unallocated();
+    test_rules_numeric_safety();
     printf("ALL ALLOCATION UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;
+}
+
+static void test_rules_numeric_safety(void) {
+    ifm_rule_set_t rs;
+    const char *valid_json = "{\"rules\":[{\"rule_id\":\"R1\",\"priority\":250,\"version\":2}]}";
+    assert(ifm_rule_set_load_json(&rs, valid_json, strlen(valid_json)));
+    assert(rs.rule_count == 1);
+    assert(rs.rules[0].priority == 250);
+    assert(rs.rules[0].version == 2);
+
+    const char *negative_priority = "{\"rules\":[{\"rule_id\":\"R2\",\"priority\":-50,\"version\":1}]}";
+    assert(ifm_rule_set_load_json(&rs, negative_priority, strlen(negative_priority)));
+    assert(rs.rules[0].priority == -50);
+
+    const char *overflow_priority = "{\"rules\":[{\"rule_id\":\"R3\",\"priority\":99999999999999999}]}";
+    ifm_rule_set_init(&rs);
+    assert(ifm_rule_set_load_json(&rs, overflow_priority, strlen(overflow_priority)));
+    assert(rs.rule_count == 0);
+
+    const char *garbage_syntax = "{\"rules\":[{\"rule_id\":\"R4\",\"priority\":1-23}]}";
+    ifm_rule_set_init(&rs);
+    assert(ifm_rule_set_load_json(&rs, garbage_syntax, strlen(garbage_syntax)));
+    assert(rs.rule_count == 0);
+
+    /* --- Version Boundary Assertions --- */
+    const char *negative_version = "{\"rules\":[{\"rule_id\":\"R5\",\"priority\":100,\"version\":-1}]}";
+    ifm_rule_set_init(&rs);
+    assert(ifm_rule_set_load_json(&rs, negative_version, strlen(negative_version)));
+    assert(rs.rule_count == 0);
+
+    const char *overflow_version = "{\"rules\":[{\"rule_id\":\"R6\",\"priority\":100,\"version\":4294967296}]}";
+    ifm_rule_set_init(&rs);
+    assert(ifm_rule_set_load_json(&rs, overflow_version, strlen(overflow_version)));
+    assert(rs.rule_count == 0);
+
+    const char *garbage_version = "{\"rules\":[{\"rule_id\":\"R7\",\"priority\":100,\"version\":1-2}]}";
+    ifm_rule_set_init(&rs);
+    assert(ifm_rule_set_load_json(&rs, garbage_version, strlen(garbage_version)));
+    assert(rs.rule_count == 0);
+
+    /* --- Plus Sign Rejection Assertions --- */
+    const char *plus_priority = "{\"rules\":[{\"rule_id\":\"R8\",\"priority\":+123}]}";
+    ifm_rule_set_init(&rs);
+    assert(ifm_rule_set_load_json(&rs, plus_priority, strlen(plus_priority)));
+    assert(rs.rule_count == 0);
+
+    const char *plus_version = "{\"rules\":[{\"rule_id\":\"R9\",\"priority\":100,\"version\":+123}]}";
+    ifm_rule_set_init(&rs);
+    assert(ifm_rule_set_load_json(&rs, plus_version, strlen(plus_version)));
+    assert(rs.rule_count == 0);
+
+    printf("  [PASS] test_rules_numeric_safety\n");
 }

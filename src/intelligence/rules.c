@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 
 static inline void safe_strcpy(char *dest, size_t dest_cap, const char *src) {
     if (!dest || dest_cap == 0) return;
@@ -46,6 +48,29 @@ static bool parse_str_val(const char **cursor, const char *end, char *out_buf, s
     size_t len = p - start;
     if (!ifm_json_unescape(start, len, out_buf, buf_cap)) return false;
     *cursor = p + 1;
+    return true;
+}
+
+static bool parse_strict_int32(const char *str, int32_t *out) {
+    if (!str || *str == '\0') return false;
+    char *endptr = NULL;
+    errno = 0;
+    long val = strtol(str, &endptr, 10);
+    if (errno == ERANGE || *endptr != '\0' || endptr == str) return false;
+    if (val < INT32_MIN || val > INT32_MAX) return false;
+    *out = (int32_t)val;
+    return true;
+}
+
+static bool parse_strict_uint32(const char *str, uint32_t *out) {
+    if (!str || *str == '\0') return false;
+    if (*str == '-') return false;
+    char *endptr = NULL;
+    errno = 0;
+    unsigned long val = strtoul(str, &endptr, 10);
+    if (errno == ERANGE || *endptr != '\0' || endptr == str) return false;
+    if (val > UINT32_MAX) return false;
+    *out = (uint32_t)val;
     return true;
 }
 
@@ -96,16 +121,19 @@ static bool parse_rule_object(const char **cursor, const char *end, ifm_allocati
             }
         } else {
             const char *num_start = p;
-            while (p < end && (isdigit((unsigned char)*p) || *p == '-' || *p == '+')) p++;
+            if (*p == '-') p++;
+            if (p >= end || !isdigit((unsigned char)*p)) return false;
+            while (p < end && isdigit((unsigned char)*p)) p++;
             size_t num_len = p - num_start;
-            if (num_len > 0 && num_len < sizeof(val_str)) {
-                memcpy(val_str, num_start, num_len);
-                val_str[num_len] = '\0';
-                if (strcmp(key, "priority") == 0) {
-                    rule->priority = (int32_t)atoi(val_str);
-                } else if (strcmp(key, "version") == 0) {
-                    rule->version = (uint32_t)atoi(val_str);
-                }
+            if (num_len == 0 || num_len >= sizeof(val_str)) return false;
+
+            memcpy(val_str, num_start, num_len);
+            val_str[num_len] = '\0';
+
+            if (strcmp(key, "priority") == 0) {
+                if (!parse_strict_int32(val_str, &rule->priority)) return false;
+            } else if (strcmp(key, "version") == 0) {
+                if (!parse_strict_uint32(val_str, &rule->version)) return false;
             }
         }
     }
