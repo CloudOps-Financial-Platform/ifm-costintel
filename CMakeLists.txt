@@ -62,6 +62,10 @@ target_link_libraries(ifm-costintel PRIVATE ifm_costintel_lib m)
 add_executable(ifm_costintel_bench bench/bench_pipeline.c)
 target_link_libraries(ifm_costintel_bench PRIVATE ifm_costintel_lib m)
 
+# Scalability profiler executable
+add_executable(ifm_costintel_scale bench/bench_scalability.c)
+target_link_libraries(ifm_costintel_scale PRIVATE ifm_costintel_lib m)
+
 # Enable testing
 enable_testing()
 
