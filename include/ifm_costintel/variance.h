@@ -12,6 +12,7 @@ extern "C" {
 typedef struct {
     char key[256];
     ifm_micros_t baseline_micros;
+    bool occupied;
 } ifm_baseline_entry_t;
 
 typedef struct {

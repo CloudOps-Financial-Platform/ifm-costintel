@@ -17,6 +17,43 @@ static inline void safe_strcpy(char *dest, size_t dest_cap, const char *src) {
     dest[len] = '\0';
 }
 
+static uint64_t fnv1a_hash(const char *str) {
+    uint64_t hash = 14695981039346656037ULL;
+    while (*str) {
+        hash ^= (uint8_t)*str++;
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+static bool baseline_table_rehash(ifm_baseline_table_t *table, size_t new_cap) {
+    if (new_cap < 64) new_cap = 64;
+    if ((new_cap & (new_cap - 1)) != 0) return false;
+    if (new_cap > SIZE_MAX / sizeof(ifm_baseline_entry_t)) return false;
+
+    ifm_baseline_entry_t *new_entries = (ifm_baseline_entry_t *)calloc(new_cap, sizeof(ifm_baseline_entry_t));
+    if (!new_entries) return false;
+
+    size_t mask = new_cap - 1;
+    if (table->entries && table->count > 0) {
+        for (size_t i = 0; i < table->capacity; ++i) {
+            if (table->entries[i].occupied) {
+                uint64_t h = fnv1a_hash(table->entries[i].key);
+                size_t idx = (size_t)(h & mask);
+                while (new_entries[idx].occupied) {
+                    idx = (idx + 1) & mask;
+                }
+                new_entries[idx] = table->entries[i];
+            }
+        }
+    }
+
+    free(table->entries);
+    table->entries = new_entries;
+    table->capacity = new_cap;
+    return true;
+}
+
 void ifm_baseline_table_init(ifm_baseline_table_t *table) {
     if (!table) return;
     table->entries = NULL;
@@ -27,35 +64,69 @@ void ifm_baseline_table_init(ifm_baseline_table_t *table) {
 bool ifm_baseline_table_set(ifm_baseline_table_t *table, const char *key, ifm_micros_t baseline_micros) {
     if (!table || !key) return false;
 
-    for (size_t i = 0; i < table->count; ++i) {
-        if (strcmp(table->entries[i].key, key) == 0) {
-            table->entries[i].baseline_micros = baseline_micros;
-            return true;
+    /* If table has entries, probe to check for existing key update */
+    if (table->entries && table->capacity > 0) {
+        uint64_t h = fnv1a_hash(key);
+        size_t mask = table->capacity - 1;
+        size_t idx = (size_t)(h & mask);
+
+        while (table->entries[idx].occupied) {
+            if (strcmp(table->entries[idx].key, key) == 0) {
+                table->entries[idx].baseline_micros = baseline_micros;
+                return true;
+            }
+            idx = (idx + 1) & mask;
         }
     }
 
-    if (table->count >= table->capacity) {
+    /* Key is new: check if capacity expansion / rehash is needed (max 70% load factor) */
+    if (table->capacity == 0 || (table->count + 1) * 10 >= table->capacity * 7) {
+        if (table->capacity > (SIZE_MAX / sizeof(ifm_baseline_entry_t)) / 2) {
+            return false;
+        }
         size_t new_cap = (table->capacity == 0) ? 64 : table->capacity * 2;
-        ifm_baseline_entry_t *new_entries = (ifm_baseline_entry_t *)realloc(table->entries, new_cap * sizeof(ifm_baseline_entry_t));
-        if (!new_entries) return false;
-        table->entries = new_entries;
-        table->capacity = new_cap;
+        if (!baseline_table_rehash(table, new_cap)) {
+            return false;
+        }
     }
 
-    safe_strcpy(table->entries[table->count].key, sizeof(table->entries[table->count].key), key);
-    table->entries[table->count].baseline_micros = baseline_micros;
+    /* Find insertion slot in table */
+    uint64_t h = fnv1a_hash(key);
+    size_t mask = table->capacity - 1;
+    size_t idx = (size_t)(h & mask);
+
+    while (table->entries[idx].occupied) {
+        if (strcmp(table->entries[idx].key, key) == 0) {
+            table->entries[idx].baseline_micros = baseline_micros;
+            return true;
+        }
+        idx = (idx + 1) & mask;
+    }
+
+    table->entries[idx].occupied = true;
+    safe_strcpy(table->entries[idx].key, sizeof(table->entries[idx].key), key);
+    table->entries[idx].baseline_micros = baseline_micros;
     table->count++;
     return true;
 }
 
 bool ifm_baseline_table_lookup(const ifm_baseline_table_t *table, const char *key, ifm_micros_t *out_baseline) {
-    if (!table || !key || !out_baseline) return false;
-    for (size_t i = 0; i < table->count; ++i) {
-        if (strcmp(table->entries[i].key, key) == 0) {
-            *out_baseline = table->entries[i].baseline_micros;
+    if (!table || !key || !out_baseline || table->count == 0 || table->capacity == 0 || !table->entries) {
+        return false;
+    }
+
+    uint64_t h = fnv1a_hash(key);
+    size_t mask = table->capacity - 1;
+    size_t idx = (size_t)(h & mask);
+
+    while (table->entries[idx].occupied) {
+        if (strcmp(table->entries[idx].key, key) == 0) {
+            *out_baseline = table->entries[idx].baseline_micros;
             return true;
         }
+        idx = (idx + 1) & mask;
     }
+
     return false;
 }
 

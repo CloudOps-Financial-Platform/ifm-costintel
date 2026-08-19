@@ -258,6 +258,154 @@ static void test_anomaly_json_loading_valid_permutations(void) {
     printf("  [PASS] test_anomaly_json_loading_valid_permutations\n");
 }
 
+static void test_baseline_table_basic_operations(void) {
+    ifm_baseline_table_t bt;
+    ifm_baseline_table_init(&bt);
+
+    /* C. Empty table lookup */
+    ifm_micros_t out_val = 12345;
+    assert(!ifm_baseline_table_lookup(&bt, "res-empty", &out_val));
+    assert(out_val == 12345); /* Output untouched */
+    assert(!ifm_baseline_table_lookup(&bt, NULL, &out_val));
+    assert(!ifm_baseline_table_lookup(NULL, "res-empty", &out_val));
+    assert(!ifm_baseline_table_lookup(&bt, "res-empty", NULL));
+
+    /* Insert new keys */
+    assert(ifm_baseline_table_set(&bt, "res-01", 10000000));
+    assert(bt.count == 1);
+    assert(ifm_baseline_table_set(&bt, "res-02", 20000000));
+    assert(bt.count == 2);
+
+    /* Lookups */
+    assert(ifm_baseline_table_lookup(&bt, "res-01", &out_val) && out_val == 10000000);
+    assert(ifm_baseline_table_lookup(&bt, "res-02", &out_val) && out_val == 20000000);
+
+    /* B. Missing key in populated table */
+    out_val = 99999;
+    assert(!ifm_baseline_table_lookup(&bt, "res-missing", &out_val));
+    assert(out_val == 99999); /* Untouched */
+
+    /* A. Existing duplicate-key update: count remains unchanged */
+    assert(ifm_baseline_table_set(&bt, "res-01", 35000000));
+    assert(bt.count == 2); /* count must NOT increase */
+    assert(ifm_baseline_table_lookup(&bt, "res-01", &out_val) && out_val == 35000000);
+
+    ifm_baseline_table_cleanup(&bt);
+    assert(bt.count == 0);
+    assert(bt.capacity == 0);
+    assert(bt.entries == NULL);
+
+    printf("  [PASS] test_baseline_table_basic_operations\n");
+}
+
+static void test_baseline_table_high_cardinality(void) {
+    ifm_baseline_table_t bt;
+    ifm_baseline_table_init(&bt);
+
+    /* D. High-cardinality table: insert 10,000 distinct keys */
+    char key_buf[64];
+    for (int i = 0; i < 10000; ++i) {
+        snprintf(key_buf, sizeof(key_buf), "resource-entity-%06d", i);
+        ifm_micros_t val = (ifm_micros_t)(i * 1000 + 7);
+        assert(ifm_baseline_table_set(&bt, key_buf, val));
+    }
+    assert(bt.count == 10000);
+
+    /* E. High-cardinality lookup after rehashes */
+    for (int i = 0; i < 10000; ++i) {
+        snprintf(key_buf, sizeof(key_buf), "resource-entity-%06d", i);
+        ifm_micros_t expected = (ifm_micros_t)(i * 1000 + 7);
+        ifm_micros_t out_val = 0;
+        assert(ifm_baseline_table_lookup(&bt, key_buf, &out_val));
+        assert(out_val == expected);
+    }
+
+    /* Update first 5,000 keys */
+    for (int i = 0; i < 5000; ++i) {
+        snprintf(key_buf, sizeof(key_buf), "resource-entity-%06d", i);
+        ifm_micros_t new_val = (ifm_micros_t)(i * 2000 + 13);
+        assert(ifm_baseline_table_set(&bt, key_buf, new_val));
+    }
+    assert(bt.count == 10000); /* Count unchanged */
+
+    /* Verify updated values */
+    for (int i = 0; i < 5000; ++i) {
+        snprintf(key_buf, sizeof(key_buf), "resource-entity-%06d", i);
+        ifm_micros_t expected = (ifm_micros_t)(i * 2000 + 13);
+        ifm_micros_t out_val = 0;
+        assert(ifm_baseline_table_lookup(&bt, key_buf, &out_val));
+        assert(out_val == expected);
+    }
+
+    /* Missing keys lookups */
+    for (int i = 10000; i < 11000; ++i) {
+        snprintf(key_buf, sizeof(key_buf), "resource-entity-%06d", i);
+        ifm_micros_t out_val = -1;
+        assert(!ifm_baseline_table_lookup(&bt, key_buf, &out_val));
+        assert(out_val == -1);
+    }
+
+    ifm_baseline_table_cleanup(&bt);
+    printf("  [PASS] test_baseline_table_high_cardinality\n");
+}
+
+static void test_baseline_table_collision_probing(void) {
+    ifm_baseline_table_t bt;
+    ifm_baseline_table_init(&bt);
+
+    /* F. Collision/probing behavior with common prefix and structured suffixes */
+    char k[128];
+    for (int i = 0; i < 1000; ++i) {
+        snprintf(k, sizeof(k), "clustered_prefix_zone_us_east_1_sub_network_interface_res_%d", i);
+        assert(ifm_baseline_table_set(&bt, k, (ifm_micros_t)(i + 1)));
+    }
+    assert(bt.count == 1000);
+
+    for (int i = 0; i < 1000; ++i) {
+        snprintf(k, sizeof(k), "clustered_prefix_zone_us_east_1_sub_network_interface_res_%d", i);
+        ifm_micros_t val = 0;
+        assert(ifm_baseline_table_lookup(&bt, k, &val));
+        assert(val == (ifm_micros_t)(i + 1));
+    }
+
+    ifm_baseline_table_cleanup(&bt);
+    printf("  [PASS] test_baseline_table_collision_probing\n");
+}
+
+static void test_baseline_table_lifecycle_reinit(void) {
+    ifm_baseline_table_t bt;
+
+    /* G. Repeated cleanup/reinitialization cycles */
+    for (int cycle = 0; cycle < 5; ++cycle) {
+        ifm_baseline_table_init(&bt);
+        assert(bt.count == 0);
+        assert(bt.capacity == 0);
+
+        char k[32];
+        for (int i = 0; i < 50; ++i) {
+            snprintf(k, sizeof(k), "cycle_%d_item_%d", cycle, i);
+            assert(ifm_baseline_table_set(&bt, k, 1000000));
+        }
+        assert(bt.count == 50);
+
+        for (int i = 0; i < 50; ++i) {
+            snprintf(k, sizeof(k), "cycle_%d_item_%d", cycle, i);
+            ifm_micros_t v = 0;
+            assert(ifm_baseline_table_lookup(&bt, k, &v) && v == 1000000);
+        }
+
+        ifm_baseline_table_cleanup(&bt);
+        assert(bt.count == 0);
+        assert(bt.capacity == 0);
+        assert(bt.entries == NULL);
+
+        /* Idempotent cleanup */
+        ifm_baseline_table_cleanup(&bt);
+    }
+
+    printf("  [PASS] test_baseline_table_lifecycle_reinit\n");
+}
+
 int main(void) {
     printf("Running Variance, Concentration & Anomaly Unit Tests...\n");
     test_variance_computation();
@@ -265,6 +413,10 @@ int main(void) {
     test_anomaly_detection();
     test_baseline_json_loading();
     test_baseline_json_loading_failures();
+    test_baseline_table_basic_operations();
+    test_baseline_table_high_cardinality();
+    test_baseline_table_collision_probing();
+    test_baseline_table_lifecycle_reinit();
     test_anomaly_json_loading();
     test_anomaly_json_loading_failures();
     test_anomaly_json_loading_valid_permutations();
