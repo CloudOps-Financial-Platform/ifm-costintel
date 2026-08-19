@@ -54,8 +54,23 @@ def match_prefix(prefix: str, value: str) -> bool:
 class CostIntelOracle:
     def __init__(self, rules_config: Optional[Dict[str, Any]] = None):
         self.rules = []
-        if rules_config and "rules" in rules_config:
-            self.rules = rules_config["rules"]
+        self.baselines = {}
+        self.anomalies = []
+
+        if rules_config:
+            if "rules" in rules_config:
+                self.rules = rules_config["rules"]
+            if "baselines" in rules_config:
+                for b in rules_config["baselines"]:
+                    key = b.get("key", b.get("resource_id", ""))
+                    if "baseline_micros" in b:
+                        self.baselines[key] = parse_micros(b["baseline_micros"])
+                    elif "baseline" in b:
+                        self.baselines[key] = parse_micros(b["baseline"])
+                    elif "cost" in b:
+                        self.baselines[key] = parse_micros(b["cost"])
+            if "anomalies" in rules_config:
+                self.anomalies = rules_config["anomalies"]
 
     def allocate_record(self, record: Dict[str, Any]) -> Tuple[str, str, str, int]:
         if record.get("is_faulted", False):
@@ -86,7 +101,34 @@ class CostIntelOracle:
         chosen = best_candidates[0]
         return "ALLOCATED", chosen.get("target_cost_center_id", chosen.get("cost_center_id", "")), chosen.get("rule_id", ""), chosen.get("version", 1)
 
-    def process_record(self, raw_line: str, line_num: int, baseline_micros: int = 0) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    def evaluate_anomalies(self, record: Dict[str, Any], baseline_micros: int, variance_delta: int) -> Tuple[bool, str, str]:
+        if not self.anomalies or record.get("variance_status") != "DEFINED" or baseline_micros <= 0:
+            return False, "", "NONE"
+
+        for r in self.anomalies:
+            min_base = r.get("min_baseline_micros", 0)
+            if isinstance(min_base, str):
+                min_base = parse_micros(min_base)
+            if baseline_micros < min_base:
+                continue
+
+            thresh = r.get("threshold_pct_micros", 0)
+            if isinstance(thresh, str):
+                thresh = parse_micros(thresh)
+
+            direction = r.get("direction", "SPIKE").upper()
+            abs_delta = abs(variance_delta)
+            pct_change = (abs_delta * MICROS_PER_UNIT) // baseline_micros
+
+            if pct_change >= thresh:
+                if variance_delta > 0 and direction in ("SPIKE", "BOTH"):
+                    return True, r.get("rule_id", ""), "SPIKE"
+                elif variance_delta < 0 and direction in ("DROP", "BOTH"):
+                    return True, r.get("rule_id", ""), "DROP"
+
+        return False, "", "NONE"
+
+    def process_record(self, raw_line: str, line_num: int, default_baseline: int = 0) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         raw_line = raw_line.strip()
         if not raw_line:
             return None, None
@@ -169,7 +211,8 @@ class CostIntelOracle:
         record["rule_id"] = rule_id
         record["rule_version"] = rule_ver
 
-        # Variance
+        # Baseline & Variance
+        baseline_micros = self.baselines.get(resource_id, default_baseline)
         variance_delta = billed_cost_micros - baseline_micros
         record["baseline_micros"] = baseline_micros
         record["variance_delta_micros"] = variance_delta
@@ -182,9 +225,11 @@ class CostIntelOracle:
         else:
             record["variance_status"] = "DEFINED"
 
-        record["is_anomaly"] = False
-        record["anomaly_rule_id"] = ""
-        record["anomaly_direction"] = "NONE"
+        # Anomaly Detection
+        is_anom, anom_rule, anom_dir = self.evaluate_anomalies(record, baseline_micros, variance_delta)
+        record["is_anomaly"] = is_anom
+        record["anomaly_rule_id"] = anom_rule
+        record["anomaly_direction"] = anom_dir
 
         return record, None
 

@@ -157,39 +157,39 @@ static void test_rules_numeric_safety(void) {
 
     const char *overflow_priority = "{\"rules\":[{\"rule_id\":\"R3\",\"priority\":99999999999999999}]}";
     ifm_rule_set_init(&rs);
-    assert(ifm_rule_set_load_json(&rs, overflow_priority, strlen(overflow_priority)));
+    assert(!ifm_rule_set_load_json(&rs, overflow_priority, strlen(overflow_priority)));
     assert(rs.rule_count == 0);
 
     const char *garbage_syntax = "{\"rules\":[{\"rule_id\":\"R4\",\"priority\":1-23}]}";
     ifm_rule_set_init(&rs);
-    assert(ifm_rule_set_load_json(&rs, garbage_syntax, strlen(garbage_syntax)));
+    assert(!ifm_rule_set_load_json(&rs, garbage_syntax, strlen(garbage_syntax)));
     assert(rs.rule_count == 0);
 
     /* --- Version Boundary Assertions --- */
     const char *negative_version = "{\"rules\":[{\"rule_id\":\"R5\",\"priority\":100,\"version\":-1}]}";
     ifm_rule_set_init(&rs);
-    assert(ifm_rule_set_load_json(&rs, negative_version, strlen(negative_version)));
+    assert(!ifm_rule_set_load_json(&rs, negative_version, strlen(negative_version)));
     assert(rs.rule_count == 0);
 
     const char *overflow_version = "{\"rules\":[{\"rule_id\":\"R6\",\"priority\":100,\"version\":4294967296}]}";
     ifm_rule_set_init(&rs);
-    assert(ifm_rule_set_load_json(&rs, overflow_version, strlen(overflow_version)));
+    assert(!ifm_rule_set_load_json(&rs, overflow_version, strlen(overflow_version)));
     assert(rs.rule_count == 0);
 
     const char *garbage_version = "{\"rules\":[{\"rule_id\":\"R7\",\"priority\":100,\"version\":1-2}]}";
     ifm_rule_set_init(&rs);
-    assert(ifm_rule_set_load_json(&rs, garbage_version, strlen(garbage_version)));
+    assert(!ifm_rule_set_load_json(&rs, garbage_version, strlen(garbage_version)));
     assert(rs.rule_count == 0);
 
     /* --- Plus Sign Rejection Assertions --- */
     const char *plus_priority = "{\"rules\":[{\"rule_id\":\"R8\",\"priority\":+123}]}";
     ifm_rule_set_init(&rs);
-    assert(ifm_rule_set_load_json(&rs, plus_priority, strlen(plus_priority)));
+    assert(!ifm_rule_set_load_json(&rs, plus_priority, strlen(plus_priority)));
     assert(rs.rule_count == 0);
 
     const char *plus_version = "{\"rules\":[{\"rule_id\":\"R9\",\"priority\":100,\"version\":+123}]}";
     ifm_rule_set_init(&rs);
-    assert(ifm_rule_set_load_json(&rs, plus_version, strlen(plus_version)));
+    assert(!ifm_rule_set_load_json(&rs, plus_version, strlen(plus_version)));
     assert(rs.rule_count == 0);
 
     printf("  [PASS] test_rules_numeric_safety\n");

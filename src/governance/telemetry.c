@@ -32,12 +32,23 @@ void ifm_telemetry_write_summary(const ifm_telemetry_t *tel,
                                  FILE *out) {
     if (!out) out = stdout;
 
-    char in_cost[32], alloc_cost[32], unalloc_cost[32], ambig_cost[32], fault_cost[32];
-    fak_format_micros(recon ? recon->total_input_micros : 0, in_cost, sizeof(in_cost));
-    fak_format_micros(recon ? recon->allocated_micros : 0, alloc_cost, sizeof(alloc_cost));
-    fak_format_micros(recon ? recon->unallocated_micros : 0, unalloc_cost, sizeof(unalloc_cost));
-    fak_format_micros(recon ? recon->ambiguous_micros : 0, ambig_cost, sizeof(ambig_cost));
-    fak_format_micros(recon ? recon->faulted_micros : 0, fault_cost, sizeof(fault_cost));
+    uint64_t gap_count = 0;
+    ifm_micros_t gap_micros = 0;
+    ifm_micros_t gap_pct_micros = 0;
+
+    if (recon) {
+        gap_count = recon->unallocated_count + recon->ambiguous_count;
+        if (fak_add_micros(recon->unallocated_micros, recon->ambiguous_micros, &gap_micros)) {
+            if (recon->total_input_micros > 0 && gap_micros > 0) {
+                if (!fak_div_micros(gap_micros, recon->total_input_micros, &gap_pct_micros)) {
+                    gap_pct_micros = -1;
+                }
+            }
+        } else {
+            gap_micros = -1;
+            gap_pct_micros = -1;
+        }
+    }
 
     fprintf(out, "{\n");
     fprintf(out, "  \"software_version\": \"1.0.0\",\n");
@@ -57,6 +68,11 @@ void ifm_telemetry_write_summary(const ifm_telemetry_t *tel,
     fprintf(out, "    \"unallocated_micros\": %" PRId64 ",\n", recon ? recon->unallocated_micros : 0);
     fprintf(out, "    \"ambiguous_micros\": %" PRId64 ",\n", recon ? recon->ambiguous_micros : 0);
     fprintf(out, "    \"faulted_micros\": %" PRId64 "\n", recon ? recon->faulted_micros : 0);
+    fprintf(out, "  },\n");
+    fprintf(out, "  \"allocation_gap\": {\n");
+    fprintf(out, "    \"gap_count\": %" PRIu64 ",\n", gap_count);
+    fprintf(out, "    \"gap_micros\": %" PRId64 ",\n", gap_micros);
+    fprintf(out, "    \"gap_pct_micros\": %" PRId64 "\n", gap_pct_micros);
     fprintf(out, "  }\n");
     fprintf(out, "}\n");
 }

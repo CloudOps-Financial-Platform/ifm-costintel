@@ -12,6 +12,7 @@
 #include "ifm_costintel/traceability.h"
 #include "ifm_costintel/rules.h"
 #include "ifm_costintel/allocation.h"
+#include "ifm_costintel/aggregation.h"
 #include "ifm_costintel/variance.h"
 #include "ifm_costintel/concentration.h"
 #include "ifm_costintel/anomaly.h"
@@ -128,7 +129,31 @@ int main(int argc, char **argv) {
 
     if (config_path) {
         if (!ifm_rule_set_load_file(&rule_set, config_path)) {
-            fprintf(stderr, "Warning: Could not parse rules from '%s', continuing with default rule set\n", config_path);
+            fprintf(stderr, "Error: Failed to load allocation rules from '%s'\n", config_path);
+            ifm_baseline_table_cleanup(&baseline_table);
+            if (in_fp != stdin) fclose(in_fp);
+            if (out_fp != stdout) fclose(out_fp);
+            if (dlq_fp) fclose(dlq_fp);
+            if (summary_fp != stderr && summary_fp != stdout) fclose(summary_fp);
+            return 1;
+        }
+        if (!ifm_baseline_table_load_file(&baseline_table, config_path)) {
+            fprintf(stderr, "Error: Failed to load baselines from '%s'\n", config_path);
+            ifm_baseline_table_cleanup(&baseline_table);
+            if (in_fp != stdin) fclose(in_fp);
+            if (out_fp != stdout) fclose(out_fp);
+            if (dlq_fp) fclose(dlq_fp);
+            if (summary_fp != stderr && summary_fp != stdout) fclose(summary_fp);
+            return 1;
+        }
+        if (!ifm_anomaly_rule_set_load_file(&anomaly_rules, config_path)) {
+            fprintf(stderr, "Error: Failed to load anomaly rules from '%s'\n", config_path);
+            ifm_baseline_table_cleanup(&baseline_table);
+            if (in_fp != stdin) fclose(in_fp);
+            if (out_fp != stdout) fclose(out_fp);
+            if (dlq_fp) fclose(dlq_fp);
+            if (summary_fp != stderr && summary_fp != stdout) fclose(summary_fp);
+            return 1;
         }
     }
 
@@ -136,6 +161,11 @@ int main(int argc, char **argv) {
     ifm_stream_reader_t stream_reader;
     if (!ifm_stream_reader_init(&stream_reader, in_fp, IFM_STREAM_BUFFER_SIZE)) {
         fprintf(stderr, "Fatal: Failed to initialize stream adapter\n");
+        ifm_baseline_table_cleanup(&baseline_table);
+        if (in_fp != stdin) fclose(in_fp);
+        if (out_fp != stdout) fclose(out_fp);
+        if (dlq_fp) fclose(dlq_fp);
+        if (summary_fp != stderr && summary_fp != stdout) fclose(summary_fp);
         return 1;
     }
 
@@ -147,6 +177,37 @@ int main(int argc, char **argv) {
 
     ifm_telemetry_t telemetry;
     ifm_telemetry_start(&telemetry);
+
+    /* Initialize Aggregation Subsystem */
+    ifm_arena_t agg_arena;
+    ifm_arena_init(&agg_arena, 65536);
+
+    ifm_aggregation_table_t agg_provider = {0};
+    ifm_aggregation_table_t agg_account = {0};
+    ifm_aggregation_table_t agg_cost_center = {0};
+    ifm_aggregation_table_t agg_resource = {0};
+
+    bool agg_ok = true;
+    if (!ifm_agg_table_init(&agg_provider, IFM_AGG_DIM_PROVIDER, 1024, &agg_arena)) agg_ok = false;
+    if (!ifm_agg_table_init(&agg_account, IFM_AGG_DIM_ACCOUNT, 1024, &agg_arena)) agg_ok = false;
+    if (!ifm_agg_table_init(&agg_cost_center, IFM_AGG_DIM_COST_CENTER, 1024, &agg_arena)) agg_ok = false;
+    if (!ifm_agg_table_init(&agg_resource, IFM_AGG_DIM_RESOURCE, 4096, &agg_arena)) agg_ok = false;
+
+    if (!agg_ok) {
+        fprintf(stderr, "Fatal: Failed to initialize aggregation subsystem\n");
+        ifm_stream_reader_cleanup(&stream_reader);
+        ifm_baseline_table_cleanup(&baseline_table);
+        ifm_agg_table_cleanup(&agg_provider);
+        ifm_agg_table_cleanup(&agg_account);
+        ifm_agg_table_cleanup(&agg_cost_center);
+        ifm_agg_table_cleanup(&agg_resource);
+        ifm_arena_destroy(&agg_arena);
+        if (in_fp != stdin) fclose(in_fp);
+        if (out_fp != stdout) fclose(out_fp);
+        if (dlq_fp) fclose(dlq_fp);
+        if (summary_fp != stderr && summary_fp != stdout) fclose(summary_fp);
+        return 1;
+    }
 
     /* Stream Processing Loop */
     char *line = NULL;
@@ -183,15 +244,23 @@ int main(int argc, char **argv) {
         /* 3. Intelligence: Allocation */
         ifm_allocate_record(&rule_set, &record);
 
-        /* 4. Intelligence: Variance */
+        /* 4. Intelligence: Multi-Dimensional Aggregation */
+        if (!record.is_faulted) {
+            ifm_agg_table_accumulate(&agg_provider, &record);
+            ifm_agg_table_accumulate(&agg_account, &record);
+            ifm_agg_table_accumulate(&agg_cost_center, &record);
+            ifm_agg_table_accumulate(&agg_resource, &record);
+        }
+
+        /* 5. Intelligence: Variance */
         ifm_micros_t baseline = 0;
         ifm_baseline_table_lookup(&baseline_table, record.resource_id, &baseline);
         ifm_compute_variance(&record, baseline);
 
-        /* 5. Intelligence: Anomaly Detection */
+        /* 6. Intelligence: Anomaly Detection */
         ifm_evaluate_anomalies(&anomaly_rules, &record);
 
-        /* 6. Governance: Reconciliation & Output */
+        /* 7. Governance: Reconciliation & Output */
         ifm_reconciliation_accumulate(&reconciliation, &record);
         ifm_write_record_ndjson(&record, out_fp);
 
@@ -207,6 +276,11 @@ int main(int argc, char **argv) {
     /* Cleanup */
     ifm_stream_reader_cleanup(&stream_reader);
     ifm_baseline_table_cleanup(&baseline_table);
+    ifm_agg_table_cleanup(&agg_provider);
+    ifm_agg_table_cleanup(&agg_account);
+    ifm_agg_table_cleanup(&agg_cost_center);
+    ifm_agg_table_cleanup(&agg_resource);
+    ifm_arena_destroy(&agg_arena);
 
     if (in_fp != stdin) fclose(in_fp);
     if (out_fp != stdout) fclose(out_fp);

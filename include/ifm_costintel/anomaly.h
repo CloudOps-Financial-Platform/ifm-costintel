@@ -28,6 +28,10 @@ void ifm_anomaly_rule_set_init(ifm_anomaly_rule_set_t *ars);
 /* Add anomaly rule */
 bool ifm_anomaly_rule_set_add(ifm_anomaly_rule_set_t *ars, const ifm_anomaly_rule_t *rule);
 
+/* Load anomaly rules from JSON configuration string or file */
+bool ifm_anomaly_rule_set_load_json(ifm_anomaly_rule_set_t *ars, const char *json_str, size_t json_len);
+bool ifm_anomaly_rule_set_load_file(ifm_anomaly_rule_set_t *ars, const char *filepath);
+
 /* Evaluate record against anomaly rules */
 void ifm_evaluate_anomalies(const ifm_anomaly_rule_set_t *ars, ifm_record_t *record);
 

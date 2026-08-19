@@ -96,6 +96,16 @@ def run_large_differential_test(c_bin_path: str, count: int = 10000):
             {"rule_id": "RULE-GCP", "priority": 50, "match_provider": "gcp", "target_cost_center_id": "CC-GCP", "version": 1},
             {"rule_id": "RULE-CONFLICT-1", "priority": 75, "match_provider": "custom", "target_cost_center_id": "CC-CUSTOM-A", "version": 1},
             {"rule_id": "RULE-CONFLICT-2", "priority": 75, "match_provider": "custom", "target_cost_center_id": "CC-CUSTOM-B", "version": 1}
+        ],
+        "baselines": [
+            {"key": "i-1000", "baseline_micros": 50000000},
+            {"key": "i-2000", "baseline_micros": 10000000},
+            {"key": "vm-100", "baseline_micros": 20000000},
+            {"key": "gcs-100", "baseline_micros": 5000000}
+        ],
+        "anomalies": [
+            {"rule_id": "ANOMALY-SPIKE-50", "threshold_pct_micros": 500000, "min_baseline_micros": 5000000, "direction": "SPIKE"},
+            {"rule_id": "ANOMALY-DROP-30", "threshold_pct_micros": 300000, "min_baseline_micros": 5000000, "direction": "DROP"}
         ]
     }
 
@@ -136,7 +146,7 @@ def run_large_differential_test(c_bin_path: str, count: int = 10000):
                 rec_c = json.loads(line_c)
                 rec_py = json.loads(line_py)
 
-                for k in ["provider", "account_id", "resource_id", "allocation_status", "cost_center_id", "rule_id", "active_spend_micros", "baseline_micros", "variance_delta_micros", "variance_status"]:
+                for k in ["provider", "account_id", "resource_id", "allocation_status", "cost_center_id", "rule_id", "active_spend_micros", "baseline_micros", "variance_delta_micros", "variance_status", "is_anomaly", "anomaly_rule_id", "anomaly_direction"]:
                     if rec_c.get(k) != rec_py.get(k):
                         print(f"Mismatch at line {line_idx} on '{k}': C={rec_c.get(k)} vs Py={rec_py.get(k)}")
                         mismatches += 1

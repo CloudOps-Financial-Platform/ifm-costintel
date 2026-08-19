@@ -3,6 +3,7 @@
 
 #include "ifm_costintel/ifm_types.h"
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,6 +31,10 @@ bool ifm_baseline_table_lookup(const ifm_baseline_table_t *table, const char *ke
 
 /* Free baseline table */
 void ifm_baseline_table_cleanup(ifm_baseline_table_t *table);
+
+/* Load baselines from JSON configuration string or file */
+bool ifm_baseline_table_load_json(ifm_baseline_table_t *table, const char *json_str, size_t json_len);
+bool ifm_baseline_table_load_file(ifm_baseline_table_t *table, const char *filepath);
 
 /* Compute variance for a record against its baseline */
 bool ifm_compute_variance(ifm_record_t *record, ifm_micros_t baseline_micros);

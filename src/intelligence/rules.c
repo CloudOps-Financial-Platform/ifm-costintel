@@ -118,6 +118,12 @@ static bool parse_rule_object(const char **cursor, const char *end, ifm_allocati
                 safe_strcpy(rule->match_resource_prefix, sizeof(rule->match_resource_prefix), val_str);
             } else if (strcmp(key, "target_cost_center_id") == 0 || strcmp(key, "cost_center_id") == 0) {
                 safe_strcpy(rule->target_cost_center_id, sizeof(rule->target_cost_center_id), val_str);
+            } else if (strcmp(key, "priority") == 0) {
+                if (!parse_strict_int32(val_str, &rule->priority)) return false;
+            } else if (strcmp(key, "version") == 0) {
+                if (!parse_strict_uint32(val_str, &rule->version)) return false;
+            } else {
+                return false;
             }
         } else {
             const char *num_start = p;
@@ -134,6 +140,8 @@ static bool parse_rule_object(const char **cursor, const char *end, ifm_allocati
                 if (!parse_strict_int32(val_str, &rule->priority)) return false;
             } else if (strcmp(key, "version") == 0) {
                 if (!parse_strict_uint32(val_str, &rule->version)) return false;
+            } else {
+                return false;
             }
         }
     }
@@ -153,15 +161,25 @@ bool ifm_rule_set_load_json(ifm_rule_set_t *rs, const char *json_str, size_t jso
 
     p = rules_pos + strlen("\"rules\"");
     p = skip_ws(p, end);
-    if (p >= end || *p != ':') return false;
+    if (p >= end || *p != ':') {
+        rs->rule_count = 0;
+        return false;
+    }
     p++;
     p = skip_ws(p, end);
-    if (p >= end || *p != '[') return false;
+    if (p >= end || *p != '[') {
+        rs->rule_count = 0;
+        return false;
+    }
     p++;
 
+    bool closed = false;
     while (p < end) {
         p = skip_ws(p, end);
-        if (p >= end || *p == ']') {
+        if (p >= end) break;
+        if (*p == ']') {
+            p++;
+            closed = true;
             break;
         }
         if (*p == ',') {
@@ -170,14 +188,23 @@ bool ifm_rule_set_load_json(ifm_rule_set_t *rs, const char *json_str, size_t jso
         }
         if (*p == '{') {
             ifm_allocation_rule_t rule;
-            if (parse_rule_object(&p, end, &rule)) {
-                ifm_rule_set_add(rs, &rule);
-            } else {
-                p++;
+            if (!parse_rule_object(&p, end, &rule)) {
+                rs->rule_count = 0;
+                return false;
+            }
+            if (!ifm_rule_set_add(rs, &rule)) {
+                rs->rule_count = 0;
+                return false;
             }
         } else {
-            p++;
+            rs->rule_count = 0;
+            return false;
         }
+    }
+
+    if (!closed) {
+        rs->rule_count = 0;
+        return false;
     }
 
     return true;
@@ -188,22 +215,32 @@ bool ifm_rule_set_load_file(ifm_rule_set_t *rs, const char *filepath) {
     FILE *fp = fopen(filepath, "rb");
     if (!fp) return false;
 
-    fseek(fp, 0, SEEK_END);
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return false;
+    }
     long sz = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-
-    if (sz <= 0 || sz > 10 * 1024 * 1024) {
+    if (sz < 0 || sz > 10 * 1024 * 1024) {
+        fclose(fp);
+        return false;
+    }
+    if (fseek(fp, 0, SEEK_SET) != 0) {
         fclose(fp);
         return false;
     }
 
-    char *buf = (char *)malloc(sz + 1);
+    char *buf = (char *)malloc((size_t)sz + 1);
     if (!buf) {
         fclose(fp);
         return false;
     }
 
-    size_t read_bytes = fread(buf, 1, sz, fp);
+    size_t read_bytes = fread(buf, 1, (size_t)sz, fp);
+    if (ferror(fp) || read_bytes != (size_t)sz) {
+        free(buf);
+        fclose(fp);
+        return false;
+    }
     fclose(fp);
     buf[read_bytes] = '\0';
 
